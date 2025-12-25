@@ -1,0 +1,21 @@
+# IR-SIM Project Dependencies
+# Core simulator
+ir-sim
+ir-sim[keyboard]
+
+# RL libraries
+gymnasium
+stable-baselines3[extra]
+tqdm
+rich
+
+# Scientific computing
+numpy
+matplotlib
+
+# Visualization and logging
+tensorboard
+
+# Configuration
+pyyaml
+
