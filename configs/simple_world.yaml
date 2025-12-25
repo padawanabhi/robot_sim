@@ -1,0 +1,28 @@
+# Simple world with a differential drive robot
+world:
+  width: 10.0      # meters
+  height: 10.0
+  step_time: 0.1   # simulation timestep (seconds)
+  sample_time: 0.1
+  offset: [5, 5]   # center the world
+
+robot:
+  - kinematics: {name: 'diff'}  # differential drive
+    shape: {name: 'circle', radius: 0.2}
+    state: [1, 1, 0]  # x, y, theta (radians)
+    goal: [8, 8, 0]   # goal position
+    vel_min: [-1, -1]  # min velocity [v, w]
+    vel_max: [1, 1]    # max velocity [v, w]
+    color: 'blue'
+    plot:
+      show_goal: true
+      show_trajectory: true
+
+obstacle:
+  - shape: {name: 'circle', radius: 0.5}
+    state: [5, 5]
+    color: 'red'
+  - shape: {name: 'rectangle', length: 2, width: 0.3}
+    state: [3, 7, 0.785]  # 45 degree rotation
+    color: 'gray'
+

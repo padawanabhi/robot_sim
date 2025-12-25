@@ -1,0 +1,31 @@
+# RL training world - randomized obstacles
+world:
+  width: 10.0
+  height: 10.0
+  step_time: 0.1
+  sample_time: 0.1
+  offset: [5, 5]
+
+robot:
+  - kinematics: {name: 'diff'}
+    shape: {name: 'circle', radius: 0.2}
+    state: [1, 1, 0]
+    goal: [8, 8, 0]
+    vel_min: [-1, -1]
+    vel_max: [1, 1]
+    color: 'blue'
+
+obstacle:
+  - shape: {name: 'circle', radius: 0.4}
+    state: [3, 3]
+    color: 'red'
+  - shape: {name: 'circle', radius: 0.4}
+    state: [6, 4]
+    color: 'red'
+  - shape: {name: 'circle', radius: 0.4}
+    state: [4, 6]
+    color: 'red'
+  - shape: {name: 'circle', radius: 0.4}
+    state: [7, 7]
+    color: 'red'
+
