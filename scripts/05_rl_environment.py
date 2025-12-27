@@ -37,10 +37,13 @@ class DiffDriveNavEnv(gym.Env):
         self.np_random = None
         
         # Action space: [linear_vel, angular_vel]
-        # Match robot's actual velocity limits from config (vel_min/vel_max: [-1, 1])
+        # RESEARCH-BASED FIX: Constrain linear_vel to [0, 1] to match go_to_goal controller
+        # Research shows: "Restricting the action space to forward movements only can prevent 
+        # the agent from developing counterproductive strategies"
+        # go_to_goal controller always uses positive velocity: v = k_rho * rho (always >= 0)
         self.action_space = spaces.Box(
-            low=np.array([-1.0, -1.0]),
-            high=np.array([1.0, 1.0]),
+            low=np.array([0.0, -1.0]),  # Linear velocity: forward only [0, 1]
+            high=np.array([1.0, 1.0]),   # Angular velocity: can turn either way [-1, 1]
             dtype=np.float32
         )
         
@@ -273,8 +276,9 @@ class DiffDriveNavEnv(gym.Env):
         goal = robot.goal.flatten()[:3]
         self.prev_distance = np.sqrt((goal[0]-pose[0])**2 + (goal[1]-pose[1])**2)
         
-        # Store start position for path efficiency calculation
+        # Store start and goal positions for path efficiency calculation
         self.start_pos = pose[:2].copy()
+        self.goal_pos = goal[:2].copy()
         self.initial_distance = self.prev_distance
         
         # #region agent log
@@ -538,18 +542,21 @@ class DiffDriveNavEnv(gym.Env):
     
     def _compute_reward(self, obs, info):
         """
-        SIMPLIFIED REWARD FUNCTION - Single clear signal: distance to goal.
+        RESEARCH-BASED REWARD FUNCTION - Progress-based with minimal competing signals.
         
-        The previous reward function was too complex with many competing signals,
-        causing the agent to learn suboptimal policies. This simplified version
-        provides ONE clear signal: get closer to goal = more reward.
+        Based on research findings:
+        1. "Simplify the reward function" - focus on primary objective
+        2. "Introduce intermediate rewards for progress" - reward distance reduction
+        3. "Penalize excessive angular velocity" - prevent spiral behavior
+        4. "Constrain action space" - already done: linear_vel [0, 1]
         
         Components:
-        1. Primary: Inverse distance reward (stronger when closer)
-        2. Collision penalty (critical for safety)
-        3. Goal bonus (for reaching goal)
+        1. PRIMARY: Progress reward (distance reduction) - clear, consistent signal
+        2. SAFETY: Collision/obstacle proximity penalty
+        3. EFFICIENCY: Penalty for excessive angular velocity (prevents spirals)
+        4. SUCCESS: Large goal bonus
         
-        This ensures the agent always knows: closer = better.
+        This matches successful RL navigation setups that use progress-based rewards.
         """
         current_distance = info["distance_to_goal"]
         
@@ -560,54 +567,69 @@ class DiffDriveNavEnv(gym.Env):
         # Base reward starts at 0
         reward = 0.0
         
-        # PRIMARY REWARD: Inverse distance to goal (simple, clear, always decreasing as agent gets closer)
-        # This is the ONLY distance-based signal - no competing bonuses
-        # Scale: At 10m: 0 reward, At 5m: 50 reward, At 1m: 90 reward, At 0.3m: 97 reward
-        # This creates a strong, consistent gradient toward the goal
-        max_distance = 10.0  # Maximum expected distance
-        distance_reward = 100.0 * (1.0 - current_distance / max_distance)
-        reward += distance_reward
+        # PRIMARY REWARD: Progress toward goal (distance reduction)
+        # Research shows: "Introduce intermediate rewards for progress to guide the agent effectively"
+        # This is the main signal - agent gets rewarded for getting closer
+        # Scale: 10.0 reward per meter of progress (strong, clear signal)
+        progress_reward = 10.0 * max(0.0, progress)  # Only reward forward progress
+        reward += progress_reward
+        
+        # CRITICAL: Penalty for excessive angular velocity (prevents spiral behavior)
+        # Research shows: "Evaluate the action space design" - agent learned to spin constantly
+        # go_to_goal controller uses: w = 1.5*alpha - 0.3*beta (typically 0.1-0.5, rarely >0.8)
+        # Agent was using w=1.0 constantly, causing spirals
+        angular_vel = abs(obs[4])  # Current angular velocity magnitude
+        if angular_vel > 0.8:  # Excessive rotation (go_to_goal rarely exceeds this)
+            # Penalize excessive spinning - encourages proportional control like go_to_goal
+            reward -= 5.0 * (angular_vel - 0.8)  # -1.0 for w=1.0, -0.2 for w=0.9
+        
+        # SAFETY: Collision/obstacle proximity penalty (critical for safety)
+        min_obstacle_dist = obs[5]
+        if min_obstacle_dist < 0.2:
+            reward -= 20.0  # Strong penalty for very close to obstacle
+        elif min_obstacle_dist < 0.4:
+            reward -= 10.0  # Moderate penalty
+        elif min_obstacle_dist < 0.6:
+            reward -= 2.0   # Small penalty
+        
+        # SUCCESS: Large goal bonus (sparse reward for task completion)
+        if current_distance < 0.3:
+            reward += 100.0  # Large bonus for reaching goal
+        
+        # Small time penalty to encourage efficiency
+        reward -= 0.1
         
         # #region agent log
         # Log reward components for debugging
-        should_log = (self.current_step % 100 == 0 or current_distance < 3.0)
+        linear_vel = obs[3]
+        angular_vel_abs = abs(obs[4])
+        should_log = (self.current_step % 100 == 0 or current_distance < 3.0 or angular_vel_abs > 0.8)
         if should_log:
             import json
             try:
+                excessive_rotation_penalty = -5.0 * (angular_vel_abs - 0.8) if angular_vel_abs > 0.8 else 0.0
                 with open('/Users/abhi/Desktop/Github_Projects/robot_sim/.cursor/debug.log', 'a') as f:
                     f.write(json.dumps({
                         "sessionId": "debug-session",
                         "runId": "eval-run",
                         "hypothesisId": "H1",
-                        "location": "05_rl_environment.py:_compute_reward:simplified",
-                        "message": "Simplified reward tracking",
+                        "location": "05_rl_environment.py:_compute_reward:research_based",
+                        "message": "Research-based reward tracking",
                         "data": {
                             "step": int(self.current_step),
                             "current_distance": float(current_distance),
-                            "distance_reward": float(distance_reward),
-                            "progress": float(progress)
+                            "progress": float(progress),
+                            "progress_reward": float(progress_reward),
+                            "linear_vel": float(linear_vel),
+                            "angular_vel": float(obs[4]),
+                            "angular_vel_abs": float(angular_vel_abs),
+                            "excessive_rotation_penalty": float(excessive_rotation_penalty),
+                            "total_reward": float(reward)
                         },
                         "timestamp": int(__import__('time').time() * 1000)
                     }) + '\n')
             except: pass
         # #endregion
-        
-        # Collision penalty (keep this - it's critical for safety)
-        # Note: Collision is handled in step() method, but we keep obstacle proximity penalty here
-        min_obstacle_dist = obs[5]
-        if min_obstacle_dist < 0.2:
-            reward -= 10.0  # Penalty for being very close to obstacle
-        elif min_obstacle_dist < 0.4:
-            reward -= 5.0  # Moderate penalty
-        elif min_obstacle_dist < 0.6:
-            reward -= 1.0  # Small penalty
-        
-        # Goal reached bonus (large bonus for success)
-        if current_distance < 0.3:
-            reward += 500.0  # Large bonus for reaching goal (much larger than distance reward to ensure it's attractive)
-        
-        # Small time penalty to encourage efficiency (but not too large to avoid discouraging exploration)
-        reward -= 0.01
         
         return reward
     
