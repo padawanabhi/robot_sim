@@ -46,3 +46,7 @@ logs/
 .DS_Store
 Thumbs.db
 robotics_simulation_projects.md
+.cursor/
+CHANGES_SUMMARY.md
+RL_ENVIRONMENT_REVIEW.md
+RL_ISSUES_AND_FIXES.md
